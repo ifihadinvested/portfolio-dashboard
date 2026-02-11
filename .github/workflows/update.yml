@@ -2,7 +2,7 @@ name: Update Portfolio Dashboard
 
 on:
   schedule:
-    - cron: '0 8 * * 0'  # Every Sunday 8am UTC
+    - cron: '0 0 * * *'  # Daily at midnight UTC
   workflow_dispatch:  # Manual trigger
 
 jobs:
@@ -19,13 +19,15 @@ jobs:
           python-version: '3.10'
       
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
       
-      - name: Fetch IBKR data
-        env:
-          IBKR_TOKEN: ${{ secrets.IBKR_TOKEN }}
-          IBKR_QUERY_ID: ${{ secrets.IBKR_QUERY_ID }}
-        run: python fetch_ibkr.py
+      # IBKR fetch disabled - using manual CSV upload
+      # - name: Fetch IBKR data
+      #   env:
+      #     IBKR_TOKEN: ${{ secrets.IBKR_TOKEN }}
+      #     IBKR_QUERY_ID: ${{ secrets.IBKR_QUERY_ID }}
+      #   run: python fetch_ibkr.py
       
       - name: Generate dashboard
         run: python generate_dashboard.py
