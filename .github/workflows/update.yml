@@ -36,7 +36,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git pull origin main
           git add index.html
-          git commit -m "Update portfolio dashboard" || echo "No changes"
+          git diff --staged --quiet || git commit -m "Update portfolio dashboard"
+          git pull --rebase origin main
           git push
