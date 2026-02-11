@@ -1,180 +1,299 @@
+import pandas as pd
 import xml.etree.ElementTree as ET
-import json
 from datetime import datetime
+import os
 
 def parse_portfolio():
-    """Parse IBKR XML to JSON"""
-    tree = ET.parse('portfolio_data.xml')
-    root = tree.getroot()
+    """Parse portfolio data from CSV or XML"""
     
-    holdings = []
-    
-    # Find OpenPositions section
-    for position in root.findall('.//OpenPosition'):
-        symbol = position.get('symbol', 'N/A')
-        quantity = float(position.get('position', 0))
-        price = float(position.get('markPrice', 0))
-        value = float(position.get('positionValue', 0))
-        pnl = float(position.get('fifoPnlUnrealized', 0))
+    # Try CSV first
+    if os.path.exists('portfolio_data.csv'):
+        print("✅ Using CSV file...")
+        df = pd.read_csv('portfolio_data.csv')
         
-        if value != 0:  # Only include non-zero positions
+        # Debug: print column names
+        print(f"CSV columns: {df.columns.tolist()}")
+        print(f"First row: {df.iloc[0].to_dict()}")
+        
+        # Parse holdings from CSV
+        holdings = []
+        for _, row in df.iterrows():
+            try:
+                holdings.append({
+                    'symbol': str(row['Symbol']),
+                    'quantity': float(row['Quantity']),
+                    'costBasis': float(row['Cost Basis']),
+                    'marketValue': float(row['Market Value']),
+                    'unrealizedPL': float(row['Unrealized P&L']),
+                    'currency': row.get('Currency', 'USD')
+                })
+            except Exception as e:
+                print(f"Error parsing row: {e}")
+                print(f"Row data: {row.to_dict()}")
+        
+        print(f"✅ Parsed {len(holdings)} holdings from CSV")
+        return holdings
+    
+    # Otherwise try XML
+    elif os.path.exists('portfolio_data.xml'):
+        print("✅ Using XML file...")
+        tree = ET.parse('portfolio_data.xml')
+        root = tree.getroot()
+        
+        holdings = []
+        for position in root.findall('.//OpenPosition'):
             holdings.append({
-                'symbol': symbol,
-                'quantity': int(quantity),
-                'price': round(price, 2),
-                'value': round(value, 2),
-                'pnl': round(pnl, 2)
+                'symbol': position.get('symbol'),
+                'quantity': float(position.get('position', 0)),
+                'costBasis': float(position.get('costBasisMoney', 0)),
+                'marketValue': float(position.get('markValue', 0)),
+                'unrealizedPL': float(position.get('fifoPnlUnrealized', 0)),
+                'currency': position.get('currency', 'USD')
             })
+        
+        print(f"✅ Parsed {len(holdings)} holdings from XML")
+        return holdings
     
-    # Sort by value (largest first)
-    holdings.sort(key=lambda x: abs(x['value']), reverse=True)
-    
-    return holdings
+    else:
+        raise FileNotFoundError("No portfolio_data.csv or portfolio_data.xml found!")
 
-def generate_html(holdings):
-    """Generate dashboard HTML"""
+def generate_dashboard(holdings):
+    """Generate HTML dashboard"""
     
-    total_value = sum(abs(h['value']) for h in holdings)
-    total_pnl = sum(h['pnl'] for h in holdings)
-    update_time = datetime.now().strftime('%Y-%m-%d %H:%M UTC')
+    # Calculate totals
+    total_value = sum(h['marketValue'] for h in holdings)
+    total_pl = sum(h['unrealizedPL'] for h in holdings)
+    total_return_pct = (total_pl / (total_value - total_pl)) * 100 if total_value > total_pl else 0
     
-    # Top 10 holdings
-    top_holdings = holdings[:10]
+    # Sort by market value
+    holdings.sort(key=lambda x: x['marketValue'], reverse=True)
     
-    html = f"""
-<!DOCTYPE html>
+    # Generate HTML
+    html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portfolio Dashboard | ifihadinvested.com</title>
+    <title>Portfolio Dashboard</title>
     <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-            background: #0a0a0a;
-            color: #e0e0e0;
-            padding: 20px;
+        * {{
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }}
-        .container {{ max-width: 1200px; margin: 0 auto; }}
-        h1 {{ 
-            font-size: 2.5rem; 
-            margin-bottom: 10px;
+        
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            padding: 20px;
+            min-height: 100vh;
         }}
-        .subtitle {{ color: #888; margin-bottom: 30px; font-size: 0.9rem; }}
+        
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        
+        .header {{
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }}
+        
+        .header h1 {{
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }}
+        
+        .header .date {{
+            color: #666;
+            font-size: 0.9em;
+        }}
+        
         .stats {{
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 20px;
-            margin-bottom: 40px;
+            margin-bottom: 20px;
         }}
+        
         .stat-card {{
-            background: #1a1a1a;
+            background: white;
+            border-radius: 15px;
             padding: 25px;
-            border-radius: 12px;
-            border: 1px solid #2a2a2a;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
         }}
-        .stat-label {{ color: #888; font-size: 0.85rem; margin-bottom: 8px; }}
-        .stat-value {{ font-size: 2rem; font-weight: 600; }}
-        .positive {{ color: #22c55e; }}
-        .negative {{ color: #ef4444; }}
+        
+        .stat-card .label {{
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }}
+        
+        .stat-card .value {{
+            color: #333;
+            font-size: 2em;
+            font-weight: bold;
+        }}
+        
+        .stat-card.positive .value {{
+            color: #10b981;
+        }}
+        
+        .stat-card.negative .value {{
+            color: #ef4444;
+        }}
+        
+        .holdings {{
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }}
+        
+        .holdings h2 {{
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }}
+        
         table {{
             width: 100%;
-            background: #1a1a1a;
-            border-radius: 12px;
-            overflow: hidden;
-            border: 1px solid #2a2a2a;
+            border-collapse: collapse;
         }}
-        th, td {{
-            padding: 16px;
-            text-align: left;
-        }}
+        
         th {{
-            background: #2a2a2a;
-            font-weight: 600;
-            font-size: 0.9rem;
-            color: #aaa;
-        }}
-        tr:not(:last-child) {{ border-bottom: 1px solid #2a2a2a; }}
-        .symbol {{ font-weight: 600; font-size: 1.1rem; }}
-        .value {{ font-family: 'Courier New', monospace; }}
-        footer {{
-            margin-top: 60px;
-            text-align: center;
+            background: #f8fafc;
+            padding: 15px;
+            text-align: left;
             color: #666;
-            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.85em;
+            letter-spacing: 0.5px;
         }}
-        a {{ color: #667eea; text-decoration: none; }}
-        a:hover {{ text-decoration: underline; }}
+        
+        td {{
+            padding: 15px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #333;
+        }}
+        
+        tr:hover {{
+            background: #f8fafc;
+        }}
+        
+        .symbol {{
+            font-weight: bold;
+            color: #667eea;
+            font-size: 1.1em;
+        }}
+        
+        .positive {{
+            color: #10b981;
+            font-weight: 600;
+        }}
+        
+        .negative {{
+            color: #ef4444;
+            font-weight: 600;
+        }}
+        
+        @media (max-width: 768px) {{
+            table {{
+                font-size: 0.9em;
+            }}
+            
+            th, td {{
+                padding: 10px;
+            }}
+        }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Live Portfolio Dashboard</h1>
-        <div class="subtitle">Auto-synced from Interactive Brokers | Last update: {update_time}</div>
+        <div class="header">
+            <h1>📊 Portfolio Dashboard</h1>
+            <div class="date">Last updated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</div>
+        </div>
         
         <div class="stats">
             <div class="stat-card">
-                <div class="stat-label">Total Portfolio Value</div>
-                <div class="stat-value">${total_value:,.0f}</div>
+                <div class="label">Total Value</div>
+                <div class="value">${total_value:,.2f}</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Total P&L</div>
-                <div class="stat-value {'positive' if total_pnl >= 0 else 'negative'}">${total_pnl:+,.0f}</div>
+            
+            <div class="stat-card {'positive' if total_pl >= 0 else 'negative'}">
+                <div class="label">Unrealized P&L</div>
+                <div class="value">${total_pl:+,.2f}</div>
             </div>
+            
+            <div class="stat-card {'positive' if total_return_pct >= 0 else 'negative'}">
+                <div class="label">Total Return</div>
+                <div class="value">{total_return_pct:+.2f}%</div>
+            </div>
+            
             <div class="stat-card">
-                <div class="stat-label">Positions</div>
-                <div class="stat-value">{len(holdings)}</div>
+                <div class="label">Positions</div>
+                <div class="value">{len(holdings)}</div>
             </div>
         </div>
         
-        <h2 style="margin-bottom: 20px; color: #ccc;">Top 10 Holdings</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Symbol</th>
-                    <th>Quantity</th>
-                    <th>Price</th>
-                    <th>Value</th>
-                    <th>P&L</th>
-                </tr>
-            </thead>
-            <tbody>
+        <div class="holdings">
+            <h2>Holdings</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Quantity</th>
+                        <th>Cost Basis</th>
+                        <th>Market Value</th>
+                        <th>Unrealized P&L</th>
+                        <th>Return %</th>
+                    </tr>
+                </thead>
+                <tbody>
 """
     
-    for h in top_holdings:
-        pnl_class = 'positive' if h['pnl'] >= 0 else 'negative'
+    for holding in holdings:
+        return_pct = (holding['unrealizedPL'] / holding['costBasis'] * 100) if holding['costBasis'] != 0 else 0
+        pl_class = 'positive' if holding['unrealizedPL'] >= 0 else 'negative'
+        
         html += f"""
-                <tr>
-                    <td class="symbol">{h['symbol']}</td>
-                    <td class="value">{h['quantity']:,}</td>
-                    <td class="value">${h['price']:,.2f}</td>
-                    <td class="value">${h['value']:,.0f}</td>
-                    <td class="value {pnl_class}">${h['pnl']:+,.0f}</td>
-                </tr>
+                    <tr>
+                        <td class="symbol">{holding['symbol']}</td>
+                        <td>{holding['quantity']:.2f}</td>
+                        <td>${holding['costBasis']:,.2f}</td>
+                        <td>${holding['marketValue']:,.2f}</td>
+                        <td class="{pl_class}">${holding['unrealizedPL']:+,.2f}</td>
+                        <td class="{pl_class}">{return_pct:+.2f}%</td>
+                    </tr>
 """
     
     html += """
-            </tbody>
-        </table>
-        
-        <footer>
-            <p>Data from IBKR Flex Query | <a href="https://ifihadinvested.substack.com" target="_blank">Read my Substack</a></p>
-            <p style="margin-top: 10px;">Disclaimer: Educational content. Not financial advice.</p>
-        </footer>
+                </tbody>
+            </table>
+        </div>
     </div>
 </body>
 </html>
 """
     
+    return html
+
+if __name__ == "__main__":
+    print("Starting dashboard generation...")
+    holdings = parse_portfolio()
+    html = generate_dashboard(holdings)
+    
     with open('index.html', 'w') as f:
         f.write(html)
     
-    print(f"✅ Dashboard generated! {len(holdings)} positions, ${total_value:,.0f} total value")
-
-if __name__ == "__main__":
-    holdings = parse_portfolio()
-    generate_html(holdings)
+    print("✅ Dashboard generated successfully!")
+    print(f"   - Total holdings: {len(holdings)}")
+    print(f"   - Output: index.html")
